@@ -1,5 +1,6 @@
 <Project>
   <PropertyGroup>
     <PipelinesVersion>4.5.3</PipelinesVersion>
+    <CommandLineParserVersion>2.5.0</CommandLineParserVersion>
   </PropertyGroup>
 </Project>
