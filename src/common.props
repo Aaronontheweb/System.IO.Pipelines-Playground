@@ -1,0 +1,5 @@
+<Project>
+  <PropertyGroup>
+    <PipelinesVersion>4.5.3</PipelinesVersion>
+  </PropertyGroup>
+</Project>
