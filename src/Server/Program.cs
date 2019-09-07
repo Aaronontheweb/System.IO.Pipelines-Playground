@@ -109,7 +109,7 @@ namespace Server
         }
 
         const int minimumBufferSize = 512;
-        const int frameLength = 4;
+        const int frameLengthHeaderSize = 4;
         const long maxFrameSize = 128000;
 
         private static async Task ReadFromSocket(Socket conn, PipeWriter writer, ILogger logger, CancellationToken cancel)
@@ -153,7 +153,7 @@ namespace Server
 
             while (!cancel.IsCancellationRequested)
             {
-                var result = await reader.ReadAsync();
+                var result = await reader.ReadAsync(cancel);                
                 var buffer = result.Buffer;
                 SequencePosition? position = null;
 
@@ -175,10 +175,16 @@ namespace Server
                     }
                 }
 
+                if (buffer.Length < frameLengthHeaderSize) // edge case - frame is less than 4bytes
+                {
+                    continue;
+                }
+
+
+                var currentFrameSize = Convert.ToInt64(buffer.Slice(frameLengthHeaderSize));
                 do
                 {
-                    var frameLength = Convert.ToInt64(buffer.Slice(4));
-                    if(frameLength > maxFrameSize)
+                  
                 } while (position != null);
             }
         }
