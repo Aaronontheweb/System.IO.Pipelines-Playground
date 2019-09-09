@@ -6,15 +6,34 @@ using System.Linq;
 
 namespace Shared
 {
+    public sealed class FrameLengthEncoder
+    {
+        public const int frameLengthHeaderSize = 4;
+        public byte[] Encode(ReadOnlyMemory<byte> msg)
+        {
+            var bytes = ArrayPool<byte>.Shared.Rent(frameLengthHeaderSize);
+            SetInt(bytes, 0, msg.Length);
+            return bytes;
+        }
+
+        internal static void SetInt(byte[] memory, int index, int value)
+        {
+            unchecked
+            {
+                uint unsignedValue = (uint)value;
+                memory[index] = (byte)(unsignedValue >> 24);
+                memory[index + 1] = (byte)(unsignedValue >> 16);
+                memory[index + 2] = (byte)(unsignedValue >> 8);
+                memory[index + 3] = (byte)unsignedValue;
+            }
+        }
+    }
+
     /// <summary>
     /// Using length-frame encoding
     /// </summary>
     public sealed class FrameLengthDecoder
     {
-        /// <summary>
-        ///     We use a 4 byte header
-        /// </summary>
-        public const int MessageLengthHeaderSize = 4;
         public const int frameLengthHeaderSize = 4;
         public long MaxFrameSize { get; }
 
@@ -30,10 +49,10 @@ namespace Shared
             _logger = logger;
         }
 
-        public SequencePosition Decode(ReadOnlySequence<byte> input, out IEnumerable<ReadOnlySequence<byte>> msgs)
+        public SequencePosition Decode(ReadOnlySequence<byte> input, out IEnumerable<ReadOnlyMemory<byte>> msgs)
         {
             var buffer = input;
-            var decoded = new List<ReadOnlySequence<byte>>();
+            var decoded = new List<ReadOnlyMemory<byte>>();
             msgs = decoded; // so we can exit if there are no processed messages
             SequencePosition position = buffer.Start;
 
@@ -72,9 +91,12 @@ namespace Shared
 
 
                 // have at least one message inside buffer
-                var msg = buffer.Slice(frameLengthHeaderSize, frameLength);
-                decoded.Add(msg);
-                position = buffer.GetPosition(frameLength + frameLengthHeaderSize);
+                var msgPosition = buffer.GetPosition(frameLengthHeaderSize);
+                if(buffer.TryGet(ref msgPosition, out var msg))
+                {
+                    decoded.Add(msg);
+                    position = msgPosition;
+                }
                 buffer = buffer.Slice(position);
             }
         }

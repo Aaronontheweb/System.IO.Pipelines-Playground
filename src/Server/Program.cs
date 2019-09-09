@@ -2,10 +2,12 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
 using System;
+using System.Buffers;
 using System.IO.Pipelines;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -66,7 +68,7 @@ namespace Server
             try
             {
                 serverLogger.LogDebug("Binding to {0}:{1}", options.Host, options.Port);
-                socket.Bind(new DnsEndPoint(options.Host, options.Port));
+                socket.Bind(new IPEndPoint(IPAddress.Parse(options.Host), options.Port));
                 socket.Listen(20);
                 serverLogger.LogInformation("Successfully bound to {0}:{1}", options.Host, options.Port);
                 while (!cancel.IsCancellationRequested)
@@ -109,8 +111,6 @@ namespace Server
         }
 
         const int minimumBufferSize = 512;
-        const int frameLengthHeaderSize = 4;
-        const long maxFrameSize = 128000;
 
         private static async Task ReadFromSocket(Socket conn, PipeWriter writer, ILogger logger, CancellationToken cancel)
         {
@@ -147,46 +147,35 @@ namespace Server
 
         private static async Task WriteToSocket(Socket conn, PipeReader reader, ILogger logger, CancellationToken cancel)
         {
-            var discardingTooLongFrame = false;
-            long bytesToDiscard = 0;
-            long tooLongFrameLength = 0;
+            var decoder = new Shared.FrameLengthDecoder(logger);
+            var encoder = new Shared.FrameLengthEncoder();
 
             while (!cancel.IsCancellationRequested)
             {
                 var result = await reader.ReadAsync(cancel);                
                 var buffer = result.Buffer;
-                SequencePosition? position = null;
 
-                // check to see if we're already discarding an illegally large frame
-                if (discardingTooLongFrame)
+                var position = decoder.Decode(buffer, out var decoded);
+                foreach(var d in decoded)
                 {
-                    var localBytesToDiscard = Math.Min(buffer.Length, bytesToDiscard);
-                    buffer = buffer.Slice(localBytesToDiscard);
-                    bytesToDiscard -= localBytesToDiscard;
-                    if(bytesToDiscard == 0)
-                    {
-                        discardingTooLongFrame = false;
-                        logger.LogDebug("No longer discarding too long frame of size [{0}] bytes.", tooLongFrameLength);
-                        tooLongFrameLength = 0;
-                    }
-                    else
-                    {
-                        continue; // can't do any further processing - still have more to discard
-                    }
+                    var str = Encoding.UTF8.GetString(d.Span);
+                    logger.LogInformation("Received: [\"{0}\"]", str);
+                    var header = encoder.Encode(d);
+                    var memory = new ReadOnlyMemory<byte>(header);
+                    await conn.SendAsync(memory, SocketFlags.None);
+                    ArrayPool<byte>.Shared.Return(header);
+                    await conn.SendAsync(d, SocketFlags.None);
+                    logger.LogInformation("Sent [{0}] bytes back to client.", d.Length);
                 }
+                reader.AdvanceTo(position);
 
-                if (buffer.Length < frameLengthHeaderSize) // edge case - frame is less than 4bytes
+                if (result.IsCompleted)
                 {
-                    continue;
+                    break;
                 }
-
-
-                var currentFrameSize = Convert.ToInt64(buffer.Slice(frameLengthHeaderSize));
-                do
-                {
-                  
-                } while (position != null);
             }
+
+            reader.Complete();
         }
     }
 }
